@@ -3173,6 +3173,10 @@ class DBRomsHandler(DBBaseHandler):
         tgdb_id: int | None = None,
         flashpoint_id: str | None = None,
         hltb_id: int | None = None,
+        demozoo_id: int | None = None,
+        pouet_id: int | None = None,
+        csdb_id: int | None = None,
+        steam_id: int | None = None,
         *,
         query: Query = None,  # type: ignore
         session: Session = None,  # type: ignore
@@ -3195,6 +3199,10 @@ class DBRomsHandler(DBBaseHandler):
                 (tgdb_id, Rom.tgdb_id),
                 (flashpoint_id, Rom.flashpoint_id),
                 (hltb_id, Rom.hltb_id),
+                (demozoo_id, Rom.demozoo_id),
+                (pouet_id, Rom.pouet_id),
+                (csdb_id, Rom.csdb_id),
+                (steam_id, Rom.steam_id),
             ]
             if value is not None
         ]
@@ -3251,17 +3259,30 @@ class DBRomsHandler(DBBaseHandler):
         crc_hash: str | None = None,
         md5_hash: str | None = None,
         sha1_hash: str | None = None,
+        title_id: str | None = None,
         session: Session = None,  # type: ignore
     ) -> Rom | None:
-        """Find a ROM marked missing on a platform whose hashes match the file.
+        """Find a ROM marked missing on a platform that identifies the file.
 
         Used during scanning to reassociate a renamed or moved file with its
         existing entry (preserving collections, notes, and assets) instead of
-        creating a duplicate. Requires the CRC, MD5, and SHA1 hashes to all
-        match. Any missing hash yields no match, so non-hashable platforms and
-        pre-hash entries safely fall back to creating a new entry.
+        creating a duplicate. All three hashes must match; any missing hash
+        falls through to the binary title id, which non-hashable platforms
+        like Switch carry instead.
+
+        Returns:
+            The single matching ROM, or None when there is no unambiguous one.
         """
-        if not (crc_hash and md5_hash and sha1_hash):
+        identity: tuple[ColumnElement[bool], ...]
+        if crc_hash and md5_hash and sha1_hash:
+            identity = (
+                Rom.crc_hash == crc_hash,
+                Rom.md5_hash == md5_hash,
+                Rom.sha1_hash == sha1_hash,
+            )
+        elif title_id:
+            identity = (Rom.title_id == title_id,)
+        else:
             return None
 
         matches = session.scalars(
@@ -3270,9 +3291,7 @@ class DBRomsHandler(DBBaseHandler):
                 and_(
                     Rom.platform_id == platform_id,
                     Rom.missing_from_fs.is_(True),
-                    Rom.crc_hash == crc_hash,
-                    Rom.md5_hash == md5_hash,
-                    Rom.sha1_hash == sha1_hash,
+                    *identity,
                 )
             )
             .limit(2)
