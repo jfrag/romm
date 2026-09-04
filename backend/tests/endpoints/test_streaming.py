@@ -3207,6 +3207,12 @@ def test_slot_from_state_filename():
     assert streaming._slot_from_state_filename("retroarch", "Game.state") == 0
     assert streaming._slot_from_state_filename("retroarch", "Game.state7") == 7
     assert streaming._slot_from_state_filename("retroarch", "Game.srm") is None
+    # ScummVM spells a slot either way, and its slot 0 is the autosave, which
+    # rides the archive rather than the state routes.
+    assert streaming._slot_from_state_filename("scummvm", "woodruff-win-fr.s01") == 1
+    assert streaming._slot_from_state_filename("scummvm", "monkey.001") == 1
+    assert streaming._slot_from_state_filename("scummvm", "monkey.s00") is None
+    assert streaming._slot_from_state_filename("scummvm", "monkey.sav") is None
 
 
 def test_stamped_state_filename_round_trips_for_xemu():
@@ -3223,6 +3229,16 @@ def test_stamped_state_filename_round_trips_for_retroarch():
     stamped = streaming._stamped_state_filename("retroarch", "Super Mario.state", when)
     assert re.fullmatch(r"Super Mario\.\d{8}-\d{12}\.state", stamped)
     assert streaming._container_state_filename(stamped) == "Super Mario.state"
+
+
+def test_stamped_state_filename_round_trips_for_scummvm():
+    """The broker-side name is what a resume hands the launcher, since the
+    target in it is what picks the language variant."""
+    when = datetime(2026, 7, 21, 4, 56, 45, 123456, tzinfo=timezone.utc)
+    stamped = streaming._stamped_state_filename("scummvm", "woodruff-win-fr.s01", when)
+    assert re.fullmatch(r"woodruff-win-fr\.\d{8}-\d{12}\.s01", stamped)
+    assert streaming._container_state_filename(stamped) == "woodruff-win-fr.s01"
+    assert streaming._slot_from_state_filename("scummvm", stamped) == 1
 
 
 def _resume_claim(client, token, rom, state_id, push_ok=True):
@@ -3433,6 +3449,69 @@ def test_webstation_resume_state_is_pushed_after_activate(
     assert order.push.call_args[0][1] == "Game.03.p2s"
 
 
+def test_a_webstation_resume_names_the_state_it_is_about_to_push(
+    client, access_token, rom: Rom, admin_user: User
+):
+    """The push lands after activate, so the launcher cannot see the state when
+    it picks a target; the name travels ahead, stamp stripped, for a launcher
+    that boots the variant the state was captured on (ScummVM)."""
+    state = db_state_handler.add_state(
+        _state_for(
+            rom, admin_user, "woodruff-win-fr.20260721-045645123456.s01", "scummvm"
+        )
+    )
+    activate = MagicMock(return_value={"url": "/room/x"})
+    with _streaming({**_webstation_for(rom), "label": "ScummVM"}):
+        with (
+            patch("endpoints.streaming._webstation_activate", activate),
+            patch("endpoints.streaming._push_state_file", return_value=True),
+            patch(
+                "endpoints.streaming._hydrate_saves_to_webstation",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "endpoints.streaming.fs_asset_handler.read_file",
+                new=AsyncMock(return_value=b"state-bytes"),
+            ),
+            patch("endpoints.streaming._spawn_sync_task"),
+            patch("endpoints.streaming._hydrate_states_to_broker", new=MagicMock()),
+        ):
+            r = _claim(client, access_token, rom.id, state_id=state.id)
+    assert r.status_code == 200
+    assert r.json()["resume"] is True
+    assert activate.call_args.kwargs["resume_slot"] == 1
+    assert activate.call_args.kwargs["resume_file"] == "woodruff-win-fr.s01"
+
+
+def test_the_activate_body_names_the_resume_state_only_when_given(
+    rom: Rom, admin_user: User
+):
+    """A hint for one launcher stays out of every body that has no state to push."""
+    with patch(
+        "endpoints.streaming._broker_request", return_value={"url": "/room/x"}
+    ) as request:
+        streaming._webstation_activate(
+            _webstation_for(rom),
+            session_id="s",
+            user=admin_user,
+            emulator="scummvm",
+            resume_slot=1,
+            resume_file="woodruff-win-fr.s01",
+        )
+        assert request.call_args.kwargs["body"]["save"] == {
+            "resume_slot": 1,
+            "resume_file": "woodruff-win-fr.s01",
+        }
+        streaming._webstation_activate(
+            _webstation_for(rom),
+            session_id="s",
+            user=admin_user,
+            emulator="scummvm",
+            resume_slot=1,
+        )
+        assert request.call_args.kwargs["body"]["save"] == {"resume_slot": 1}
+
+
 def test_webstation_claim_without_a_state_boots_clean(client, access_token, rom: Rom):
     """A restored archive puts in-game saves back, nothing more: no picked
     state means no resume_slot, even though the archive carries the exit
@@ -3452,6 +3531,7 @@ def test_webstation_claim_without_a_state_boots_clean(client, access_token, rom:
     assert r.status_code == 200
     assert activate.call_args.kwargs["archive_path"] == "/romm/saves/archive.tar"
     assert activate.call_args.kwargs["resume_slot"] is None
+    assert activate.call_args.kwargs["resume_file"] is None
 
 
 def test_stopping_a_webstation_broker_reports_the_state_it_captured(rom: Rom):
