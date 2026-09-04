@@ -3207,6 +3207,12 @@ def test_slot_from_state_filename():
     assert streaming._slot_from_state_filename("retroarch", "Game.state") == 0
     assert streaming._slot_from_state_filename("retroarch", "Game.state7") == 7
     assert streaming._slot_from_state_filename("retroarch", "Game.srm") is None
+    # ScummVM spells a slot either way, and its slot 0 is the autosave, which
+    # rides the archive rather than the state routes.
+    assert streaming._slot_from_state_filename("scummvm", "woodruff-win-fr.s01") == 1
+    assert streaming._slot_from_state_filename("scummvm", "monkey.001") == 1
+    assert streaming._slot_from_state_filename("scummvm", "monkey.s00") is None
+    assert streaming._slot_from_state_filename("scummvm", "monkey.sav") is None
 
 
 def test_stamped_state_filename_round_trips_for_xemu():
@@ -3223,6 +3229,16 @@ def test_stamped_state_filename_round_trips_for_retroarch():
     stamped = streaming._stamped_state_filename("retroarch", "Super Mario.state", when)
     assert re.fullmatch(r"Super Mario\.\d{8}-\d{12}\.state", stamped)
     assert streaming._container_state_filename(stamped) == "Super Mario.state"
+
+
+def test_stamped_state_filename_round_trips_for_scummvm():
+    """The broker-side name is what a resume hands the launcher, since the
+    target in it is what picks the language variant."""
+    when = datetime(2026, 7, 21, 4, 56, 45, 123456, tzinfo=timezone.utc)
+    stamped = streaming._stamped_state_filename("scummvm", "woodruff-win-fr.s01", when)
+    assert re.fullmatch(r"woodruff-win-fr\.\d{8}-\d{12}\.s01", stamped)
+    assert streaming._container_state_filename(stamped) == "woodruff-win-fr.s01"
+    assert streaming._slot_from_state_filename("scummvm", stamped) == 1
 
 
 def _resume_claim(client, token, rom, state_id, push_ok=True):
