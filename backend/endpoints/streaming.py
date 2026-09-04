@@ -1985,13 +1985,15 @@ def _webstation_activate(
     gui_language: str | None = None,
     archive_path: str | None = None,
     resume_slot: int | None = None,
+    resume_file: str | None = None,
     memory_card_synced: bool = False,
     multiplayer: bool = False,
 ) -> dict[str, Any]:
     """POST /activate. Raises HTTPException the same way _call_broker does.
 
     `rom` is omitted for emulators the broker registers with requires_rom
-    False, the desktop being the one that matters here.
+    False, the desktop being the one that matters here. `resume_file` is the
+    container-side name of the state pushed for `resume_slot`.
     """
     body: dict[str, Any] = {
         "session_id": session_id,
@@ -2014,6 +2016,10 @@ def _webstation_activate(
         save["archive"] = archive_path
     if resume_slot is not None:
         save["resume_slot"] = resume_slot
+    if resume_file:
+        # Read by a launcher that names its target after the save (ScummVM
+        # boots the language variant the state was captured on).
+        save["resume_file"] = resume_file
     if memory_card_synced:
         # The card travels on its own routes, so the broker leaves it out of
         # both the archive it restores and the one it dumps at exit.
@@ -4113,6 +4119,11 @@ async def claim_session(
                 archive_path=archive_path,
                 resume_slot=(
                     resume_slot if resume_pushed or resume_after_launch else None
+                ),
+                resume_file=(
+                    _container_state_filename(resume_state.file_name)
+                    if resume_after_launch and resume_state is not None
+                    else None
                 ),
                 memory_card_synced=memory_card is not None,
                 multiplayer=req.multiplayer,
