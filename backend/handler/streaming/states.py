@@ -54,6 +54,9 @@ _SLOT_PATTERNS = {
     # RetroArch leaves the number off its default slot: "GAME.state" is slot 0
     # and "GAME.state3" is slot 3.
     "retroarch": re.compile(r"\.state(\d{0,2})$"),
+    # ScummVM spells a slot "<target>.s03" or "<target>.003". Its slot 0 is the
+    # autosave, which rides the save archive, and the default minimum refuses it.
+    "scummvm": re.compile(r"\.s?(\d{2,3})$"),
 }
 
 
