@@ -82,6 +82,11 @@ async def run_launch(
                 resume_slot=(
                     resume_slot if resume_pushed or resume_after_launch else None
                 ),
+                resume_file=(
+                    states.container_state_filename(resume_state.file_name)
+                    if resume_after_launch and resume_state is not None
+                    else None
+                ),
                 memory_card_synced=memory_card_synced,
                 multiplayer=multiplayer,
             )
